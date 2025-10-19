@@ -14,11 +14,9 @@ var postgres = new PostgreSqlBuilder()
     .WithPassword("password")
     .Build();
 
-await postgres.StartAsync();
-
 var pubSub = new PubSubBuilder().Build();
 
-await pubSub.StartAsync();
+await Task.WhenAll(postgres.StartAsync(), pubSub.StartAsync());
 
 builder
     .AddProject<Projects.app>("app")
