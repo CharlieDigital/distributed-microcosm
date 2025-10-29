@@ -155,12 +155,12 @@ class MonitoringService(IDbContextFactory<MicroDbContext> factory) : BackgroundS
             {
                 Console.WriteLine($"[Monitoring] Acquired or renewed lease");
 
-                await Task.Delay(SamplingInterval, stoppingToken);
+                await Task.Delay(SamplingInterval * 0.9, stoppingToken);
             }
             else
             {
                 // Not acquired; 2x the sampling interval
-                await Task.Delay(SamplingInterval * 2, stoppingToken);
+                await Task.Delay(SamplingInterval * 3, stoppingToken);
             }
         }
     }

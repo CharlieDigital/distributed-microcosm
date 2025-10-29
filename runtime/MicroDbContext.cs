@@ -1,5 +1,7 @@
 using Medallion.Threading.Postgres;
+using Medallion.Threading.Redis;
 using Microsoft.EntityFrameworkCore;
+using StackExchange.Redis;
 
 public class MicroDbContext : DbContext
 {
@@ -25,13 +27,20 @@ public static class MicroDbContextExtensions
         bool renewExisting = false
     )
     {
-        await using var connection = context.Database.GetDbConnection();
-        await connection.OpenAsync();
-        using var transaction = await connection.BeginTransactionAsync();
+        // Acquire the lock and check if there is an active lease.  If so, exit.
+        var redis = await ConnectionMultiplexer.ConnectAsync(
+            Environment.GetEnvironmentVariable("redis") ?? ""
+        ); // uses StackExchange.Redis
 
-        // Acquire the lock and check if there is an active least.  If so, exit.
-        var key = new PostgresAdvisoryLockKey(roleName, true);
-        await PostgresDistributedLock.AcquireWithTransactionAsync(key, transaction);
+        var @lock = new RedisDistributedLock("MyLockName", redis.GetDatabase());
+
+        await using (var handle = await @lock.TryAcquireAsync())
+        {
+            if (handle == null)
+            {
+                return false;
+            }
+        }
 
         var existingLease = await context
             .ClusterRoleLeases.Where(l => l.RoleName == roleName)
@@ -48,7 +57,6 @@ public static class MicroDbContextExtensions
 
             context.ClusterRoleLeases.Add(newLease);
             await context.SaveChangesAsync();
-            await transaction.CommitAsync();
             return true;
         }
 
@@ -57,15 +65,16 @@ public static class MicroDbContextExtensions
 
         if (existingLease.LeaseExpiresAt < now || renewExisting)
         {
-            // Existing lease has expired or renewal requested, renew it with a buffer
-            existingLease.LeaseExpiresAt = now + leaseDuration.Ticks + 1000;
+            Console.WriteLine(
+                renewExisting ? "Renewing existing lease..." : "Acquiring expired lease..."
+            );
+
+            // Existing lease has expired or renewal requested
+            existingLease.LeaseExpiresAt = now + leaseDuration.Ticks;
             context.ClusterRoleLeases.Update(existingLease);
             await context.SaveChangesAsync();
-            await transaction.CommitAsync();
             return true;
         }
-
-        await transaction.RollbackAsync();
 
         return false;
     }
